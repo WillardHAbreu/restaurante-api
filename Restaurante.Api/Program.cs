@@ -9,13 +9,19 @@ using Restaurante.Api.Servicos;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Configuração da Connection String do Npgsql
-var connectionString = builder.Configuration.GetConnectionString("Padrao") 
-    ?? Environment.GetEnvironmentVariable("ConnectionStrings__Padrao") 
+// 1. Connection String: vem de variável de ambiente (Render/Neon) ou do appsettings.Development.json (local).
+// "Data Source=..." usa SQLite (só para testar na sua máquina); qualquer outra coisa usa Postgres.
+var connectionString = builder.Configuration.GetConnectionString("Padrao")
+    ?? Environment.GetEnvironmentVariable("ConnectionStrings__Padrao")
     ?? throw new InvalidOperationException("Connection string 'Padrao' não encontrada.");
 
+var usaSqlite = connectionString.TrimStart().StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase);
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+{
+    if (usaSqlite) options.UseSqlite(connectionString);
+    else options.UseNpgsql(connectionString);
+});
 
 // 2. Serviços e Injeção de Dependência
 builder.Services.AddScoped<TokenService>();
@@ -128,7 +134,10 @@ app.MapGet("/api/versao", () => new
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+    // Postgres: aplica as migrations (histórico versionado). SQLite local: cria o banco direto do modelo,
+    // porque as migrations são geradas para Postgres.
+    if (usaSqlite) await db.Database.EnsureCreatedAsync();
+    else await db.Database.MigrateAsync();
 
     // Seed Idempotente
     var adminSenha = builder.Configuration["Seed:AdminSenha"] 
@@ -188,5 +197,5 @@ using (var scope = app.Services.CreateScope())
 
 app.Run();
 
-// Necessário para testes de serviço com SQLite em memória
+// Necessário para os testes de serviço (SQLite em memória, só no projeto de testes)
 public partial class Program { }
